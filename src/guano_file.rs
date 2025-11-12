@@ -17,6 +17,8 @@ impl GuanoFile {
     pub fn new(file: File) -> Result<Self, GuanoError> {
         let mut gf = GuanoFile {
             file,
+            wav_data_offset: 0,
+            wav_data_size: 0,
             map: HashMap::new(),
         };
         gf.load()?;
@@ -57,6 +59,9 @@ impl GuanoFile {
             if chunkid_buf == c"guan".to_bytes() {
                 let mut metadata_buf = vec![0; chunksz];
                 buf_reader.read_exact(&mut metadata_buf[0..chunksz])?;
+                drop(buf_reader);
+                self.parse(&metadata_buf);
+                break;
             }
             // this is where the actual PCM data begins
             else if chunkid_buf == c"data".to_bytes() {
@@ -70,6 +75,22 @@ impl GuanoFile {
         }
 
         Ok(())
+    }
+
+    fn parse(&mut self, raw: &[u8]) {
+        // check if the str can be interpreted directly
+        if let Ok(str) = str::from_utf8(&raw) {
+            for mut line in str.lines() {
+                line = line.trim();
+                let kv: Vec<&str> = line.splitn(2, ':').collect();
+                assert_eq!(kv.len(), 2);
+                let full_key = kv[0];
+                let val = kv[1];
+                self.map.insert(full_key.to_owned(), val.to_owned());
+            }
+            println!("{:?}", self.map);
+        }
+        // lossy interpretation of the GUANO metadata
     }
 }
 
