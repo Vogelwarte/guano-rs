@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
+    hash::Hash,
     io::{self, BufRead, BufReader, Read, Seek},
 };
 use thiserror::Error;
@@ -23,6 +24,9 @@ impl GuanoFile {
         };
         gf.load()?;
         Ok(gf)
+    }
+    pub fn metadata(&self) -> &HashMap<String, String> {
+        &self.map
     }
 
     fn load(&mut self) -> Result<(), GuanoError> {
@@ -88,7 +92,6 @@ impl GuanoFile {
                 let val = kv[1];
                 self.map.insert(full_key.to_owned(), val.to_owned());
             }
-            println!("{:?}", self.map);
         }
         // lossy interpretation of the GUANO metadata
     }
@@ -110,6 +113,14 @@ mod tests {
     fn open_file() -> Result<(), GuanoError> {
         let f = File::open("testdata/2MA04827_20250227_063900.wav")?;
         GuanoFile::new(f)?;
+        Ok(())
+    }
+
+    #[test]
+    fn has_guano_version() -> Result<(), GuanoError> {
+        let f = File::open("testdata/2MA04827_20250227_063900.wav")?;
+        let gf = GuanoFile::new(f)?;
+        assert!(gf.metadata().get("GUANO|Version").is_some());
         Ok(())
     }
 }
