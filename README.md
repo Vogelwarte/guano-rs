@@ -23,7 +23,7 @@ guano-rs = "0.1.0"
 
 ```rust
 use std::fs::File;
-use guano_rs::guano_file::GuanoFile;
+use guano_rs::GuanoFile;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open a WAV file containing GUANO metadata

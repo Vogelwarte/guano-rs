@@ -27,10 +27,9 @@ use thiserror::Error;
 /// let guano = GuanoFile::new(file).unwrap();
 /// let metadata = guano.metadata();
 /// ```
+#[derive(Debug)]
 pub struct GuanoFile {
     file: File,
-    wav_data_offset: usize,
-    wav_data_size: usize,
     map: HashMap<String, GuanoValue>,
 }
 
@@ -61,6 +60,7 @@ pub struct GuanoFile {
 ///     }
 /// }
 /// ```
+#[derive(Debug)]
 pub enum GuanoValue {
     /// A simple string value
     String(String),
@@ -71,9 +71,36 @@ pub enum GuanoValue {
 impl Index<&str> for GuanoValue {
     type Output = GuanoValue;
 
+    /// Provides index access to nested `GuanoValue::Object` values.
+    ///
+    /// # Panics
+    ///
+    /// This implementation will panic in two cases:
+    /// 1. If called on a `GuanoValue::String` variant (strings are not indexable)
+    /// 2. If the key does not exist in a `GuanoValue::Object` variant
+    ///
+    /// For safer access, use pattern matching or the `get()` method on the underlying `HashMap`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use guano_rs::{GuanoFile, GuanoValue};
+    /// use std::fs::File;
+    ///
+    /// let file = File::open("recording.wav").unwrap();
+    /// let guano = GuanoFile::new(file).unwrap();
+    ///
+    /// // Safe: Check type first
+    /// if let GuanoValue::Object(_) = &guano.metadata()["GUANO"] {
+    ///     let version = &guano.metadata()["GUANO"]["Version"];
+    /// }
+    ///
+    /// // Unsafe: Will panic if "Timestamp" is a String or doesn't exist
+    /// // let version = &guano.metadata()["Timestamp"]["Timezone"];
+    /// ```
     fn index(&self, index: &str) -> &Self::Output {
         match self {
-            GuanoValue::String(_) => panic!(),
+            GuanoValue::String(_) => panic!("Cannot index into GuanoValue::String"),
             GuanoValue::Object(hash_map) => &hash_map[index],
         }
     }
@@ -108,8 +135,6 @@ impl GuanoFile {
     pub fn new(file: File) -> Result<Self, GuanoError> {
         let mut gf = GuanoFile {
             file,
-            wav_data_offset: 0,
-            wav_data_size: 0,
             map: HashMap::new(),
         };
         gf.load()?;
@@ -172,10 +197,14 @@ impl GuanoFile {
         let mut chunkid_buf = [0u8; 4];
         let mut chunksz_buf = [0u8; 4];
         let mut chunksz;
+        let mut found_guano = false;
         buf_reader.seek(io::SeekFrom::Start(0x0C))?;
         loop {
             // read chunk id big endian
-            buf_reader.read_exact(&mut chunkid_buf)?;
+            if buf_reader.read_exact(&mut chunkid_buf).is_err() {
+                // Reached end of file
+                break;
+            }
             // read chunk size as little endian
             buf_reader.read_exact(&mut chunksz_buf)?;
             chunksz = u32::from_le_bytes(chunksz_buf) as usize;
@@ -185,14 +214,9 @@ impl GuanoFile {
                 let mut metadata_buf = vec![0; chunksz];
                 buf_reader.read_exact(&mut metadata_buf[0..chunksz])?;
                 drop(buf_reader);
-                self.parse(&metadata_buf);
+                self.parse(&metadata_buf)?;
+                found_guano = true;
                 break;
-            }
-            // this is where the actual PCM data begins
-            else if chunkid_buf == c"data".to_bytes() {
-                self.wav_data_offset = buf_reader.stream_position()? as usize;
-                self.wav_data_size = chunksz;
-                buf_reader.seek_relative(chunksz.try_into().unwrap())?;
             } else {
                 buf_reader.seek_relative(chunksz.try_into().unwrap())?;
             }
@@ -201,36 +225,59 @@ impl GuanoFile {
             }
         }
 
+        if !found_guano {
+            return Err(GuanoError::NoGuanoMetadata);
+        }
+
         Ok(())
     }
 
-    fn parse(&mut self, raw: &[u8]) {
+    fn parse(&mut self, raw: &[u8]) -> Result<(), GuanoError> {
         // check if the str can be interpreted directly
-        if let Ok(str) = str::from_utf8(raw) {
-            for mut line in str.lines() {
-                line = line.trim();
-                let kv: Vec<&str> = line.splitn(2, ':').collect();
-                assert_eq!(kv.len(), 2);
-                let full_key = kv[0];
-                let val = kv[1].to_owned();
-                // check to see if the key has a namespace
-                if full_key.contains('|') {
-                    let ns: Vec<&str> = full_key.splitn(2, '|').collect();
-                    assert_eq!(ns.len(), 2);
-                    if !self.map.contains_key(ns[0]) {
-                        self.map
-                            .insert(ns[0].to_owned(), GuanoValue::Object(HashMap::new()));
-                    }
-                    if let Some(GuanoValue::Object(m)) = self.map.get_mut(ns[0]) {
-                        m.insert(ns[1].to_owned(), GuanoValue::String(val));
-                    }
-                } else {
-                    self.map
-                        .insert(full_key.to_owned(), GuanoValue::String(val));
+        let str = str::from_utf8(raw)
+            .map_err(|e| GuanoError::MalformedMetadata(format!("Invalid UTF-8: {}", e)))?;
+
+        for mut line in str.lines() {
+            line = line.trim();
+            if line.is_empty() {
+                continue; // Skip empty lines
+            }
+
+            let kv: Vec<&str> = line.splitn(2, ':').collect();
+            if kv.len() != 2 {
+                return Err(GuanoError::MalformedMetadata(format!(
+                    "Expected key:value format, found: '{}'",
+                    line
+                )));
+            }
+
+            let full_key = kv[0];
+            let val = kv[1].to_owned();
+
+            // check to see if the key has a namespace
+            if full_key.contains('|') {
+                let ns: Vec<&str> = full_key.splitn(2, '|').collect();
+                if ns.len() != 2 {
+                    return Err(GuanoError::MalformedMetadata(format!(
+                        "Malformed namespace in key: '{}'",
+                        full_key
+                    )));
                 }
+
+                if !self.map.contains_key(ns[0]) {
+                    self.map
+                        .insert(ns[0].to_owned(), GuanoValue::Object(HashMap::new()));
+                }
+                if let Some(GuanoValue::Object(m)) = self.map.get_mut(ns[0]) {
+                    m.insert(ns[1].to_owned(), GuanoValue::String(val));
+                }
+            } else {
+                self.map
+                    .insert(full_key.to_owned(), GuanoValue::String(val));
             }
         }
-        // lossy interpretation of the GUANO metadata
+
+        Ok(())
     }
 }
 
@@ -252,6 +299,22 @@ pub enum GuanoError {
     /// - The file structure does not conform to the RIFF WAVE specification
     #[error("RIFF \"WAVE\" header error")]
     FileHeaderError(String),
+
+    /// The WAV file does not contain a GUANO metadata chunk.
+    ///
+    /// This error occurs when the file is a valid WAV file but does not contain
+    /// the `guan` RIFF chunk that stores GUANO metadata.
+    #[error("No GUANO metadata chunk found in file")]
+    NoGuanoMetadata,
+
+    /// The GUANO metadata is malformed and cannot be parsed.
+    ///
+    /// This error occurs when:
+    /// - Metadata lines do not contain the expected key:value format
+    /// - Namespaced keys are malformed
+    /// - The metadata contains invalid UTF-8 sequences
+    #[error("Malformed GUANO metadata: {0}")]
+    MalformedMetadata(String),
 }
 
 #[cfg(test)]
@@ -278,6 +341,13 @@ mod tests {
             gf.metadata()["GUANO"]["Version"],
             GuanoValue::String(_)
         ));
+        Ok(())
+    }
+    #[test]
+    fn has_no_guano_metadata() -> Result<(), io::Error> {
+        let f = File::open("testdata/recording.wav")?;
+        let expected_err = GuanoFile::new(f).unwrap_err();
+        assert!(matches!(expected_err, GuanoError::NoGuanoMetadata));
         Ok(())
     }
 }
