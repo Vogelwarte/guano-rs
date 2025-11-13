@@ -1,17 +1,34 @@
+use core::hash;
 use std::{
     collections::HashMap,
     fs::File,
     hash::Hash,
-    io::{self, BufRead, BufReader, Read, Seek},
+    io::{self, BufReader, Read, Seek},
+    ops::Index,
 };
 use thiserror::Error;
 pub struct GuanoFile {
     file: File,
     wav_data_offset: usize,
     wav_data_size: usize,
-    map: HashMap<String, String>,
+    map: HashMap<String, GuanoValue>,
 }
 
+pub enum GuanoValue {
+    String(String),
+    Object(HashMap<String, GuanoValue>),
+}
+
+impl Index<&str> for GuanoValue {
+    type Output = GuanoValue;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        match self {
+            GuanoValue::String(_) => panic!(),
+            GuanoValue::Object(hash_map) => &hash_map[index],
+        }
+    }
+}
 /// This struct represents a single file's GUANO metadata.
 impl GuanoFile {
     /// Create a new GuanoFile
@@ -25,7 +42,7 @@ impl GuanoFile {
         gf.load()?;
         Ok(gf)
     }
-    pub fn metadata(&self) -> &HashMap<String, String> {
+    pub fn metadata(&self) -> &HashMap<String, GuanoValue> {
         &self.map
     }
 
@@ -50,7 +67,7 @@ impl GuanoFile {
 
         let mut chunkid_buf = [0u8; 4];
         let mut chunksz_buf = [0u8; 4];
-        let mut chunksz = 0usize;
+        let mut chunksz;
         buf_reader.seek(io::SeekFrom::Start(0x0C))?;
         loop {
             // read chunk id big endian
@@ -69,6 +86,8 @@ impl GuanoFile {
             }
             // this is where the actual PCM data begins
             else if chunkid_buf == c"data".to_bytes() {
+                self.wav_data_offset = buf_reader.stream_position()? as usize;
+                self.wav_data_size = chunksz;
                 buf_reader.seek_relative(chunksz.try_into().unwrap())?;
             } else {
                 buf_reader.seek_relative(chunksz.try_into().unwrap())?;
@@ -89,8 +108,22 @@ impl GuanoFile {
                 let kv: Vec<&str> = line.splitn(2, ':').collect();
                 assert_eq!(kv.len(), 2);
                 let full_key = kv[0];
-                let val = kv[1];
-                self.map.insert(full_key.to_owned(), val.to_owned());
+                let val = kv[1].to_owned();
+                // check to see if the key has a namespace
+                if full_key.contains('|') {
+                    let ns: Vec<&str> = full_key.splitn(2, '|').collect();
+                    assert_eq!(ns.len(), 2);
+                    if !self.map.contains_key(ns[0]) {
+                        self.map
+                            .insert(ns[0].to_owned(), GuanoValue::Object(HashMap::new()));
+                    }
+                    if let Some(GuanoValue::Object(m)) = self.map.get_mut(ns[0]) {
+                        m.insert(ns[1].to_owned(), GuanoValue::String(val));
+                    }
+                } else {
+                    self.map
+                        .insert(full_key.to_owned(), GuanoValue::String(val));
+                }
             }
         }
         // lossy interpretation of the GUANO metadata
@@ -120,7 +153,15 @@ mod tests {
     fn has_guano_version() -> Result<(), GuanoError> {
         let f = File::open("testdata/2MA04827_20250227_063900.wav")?;
         let gf = GuanoFile::new(f)?;
-        assert!(gf.metadata().get("GUANO|Version").is_some());
+        // test some required params
+        assert!(gf.metadata().get("GUANO").is_some());
+        // test root level namespace param
+        assert!(matches!(gf.metadata()["Timestamp"], GuanoValue::String(_)));
+        // test hierarchichal param
+        assert!(matches!(
+            gf.metadata()["GUANO"]["Version"],
+            GuanoValue::String(_)
+        ));
         Ok(())
     }
 }
