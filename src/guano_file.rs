@@ -7,6 +7,23 @@ use std::{
     ops::Index,
 };
 use thiserror::Error;
+
+/// Represents a WAV file containing GUANO metadata.
+///
+/// This struct provides read-only access to GUANO (Grand Unified Acoustic Notation Ontology)
+/// metadata stored in WAV files. GUANO metadata is commonly used for bat acoustic recordings
+/// and is stored in the `guan` RIFF chunk within the WAV file.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::fs::File;
+/// use guano_rs::guano_file::GuanoFile;
+///
+/// let file = File::open("recording.wav").unwrap();
+/// let guano = GuanoFile::new(file).unwrap();
+/// let metadata = guano.metadata();
+/// ```
 pub struct GuanoFile {
     file: File,
     wav_data_offset: usize,
@@ -14,8 +31,37 @@ pub struct GuanoFile {
     map: HashMap<String, GuanoValue>,
 }
 
+/// Represents a value in the GUANO metadata structure.
+///
+/// GUANO metadata can contain either simple string values or nested objects
+/// (for namespaced metadata fields). Use pattern matching or the `Index` trait
+/// to access values.
+///
+/// # Examples
+///
+/// ```no_run
+/// use guano_rs::guano_file::{GuanoFile, GuanoValue};
+/// use std::fs::File;
+///
+/// let file = File::open("recording.wav").unwrap();
+/// let guano = GuanoFile::new(file).unwrap();
+///
+/// // Access a string value
+/// if let Some(GuanoValue::String(timestamp)) = guano.metadata().get("Timestamp") {
+///     println!("Timestamp: {}", timestamp);
+/// }
+///
+/// // Access a nested object
+/// if let Some(GuanoValue::Object(guano_ns)) = guano.metadata().get("GUANO") {
+///     if let Some(GuanoValue::String(version)) = guano_ns.get("Version") {
+///         println!("GUANO Version: {}", version);
+///     }
+/// }
+/// ```
 pub enum GuanoValue {
+    /// A simple string value
     String(String),
+    /// A nested object containing namespaced metadata fields
     Object(HashMap<String, GuanoValue>),
 }
 
@@ -29,9 +75,33 @@ impl Index<&str> for GuanoValue {
         }
     }
 }
-/// This struct represents a single file's GUANO metadata.
 impl GuanoFile {
-    /// Create a new GuanoFile
+    /// Creates a new `GuanoFile` by parsing GUANO metadata from a WAV file.
+    ///
+    /// This function reads the WAV file structure, locates the `guan` RIFF chunk,
+    /// and parses the GUANO metadata into a structured format.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - An open file handle to a WAV file containing GUANO metadata
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the parsed `GuanoFile` or a `GuanoError` if:
+    /// - The file is not a valid WAV file
+    /// - The file does not contain a `guan` chunk
+    /// - An I/O error occurs while reading the file
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use guano_rs::guano_file::GuanoFile;
+    ///
+    /// let file = File::open("bat_recording.wav")?;
+    /// let guano = GuanoFile::new(file)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(file: File) -> Result<Self, GuanoError> {
         let mut gf = GuanoFile {
             file,
@@ -42,6 +112,37 @@ impl GuanoFile {
         gf.load()?;
         Ok(gf)
     }
+
+    /// Returns a reference to the parsed GUANO metadata.
+    ///
+    /// The metadata is returned as a `HashMap` where keys are field names and values
+    /// are `GuanoValue` enums. Root-level fields are stored directly in the map,
+    /// while namespaced fields (e.g., `GUANO|Version`) are stored as nested objects
+    /// under their namespace key.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the metadata `HashMap<String, GuanoValue>`
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use guano_rs::guano_file::{GuanoFile, GuanoValue};
+    ///
+    /// let file = File::open("recording.wav")?;
+    /// let guano = GuanoFile::new(file)?;
+    /// let metadata = guano.metadata();
+    ///
+    /// // Access root-level field
+    /// if let Some(GuanoValue::String(ts)) = metadata.get("Timestamp") {
+    ///     println!("Recording timestamp: {}", ts);
+    /// }
+    ///
+    /// // Access namespaced field using index syntax
+    /// let version = &metadata["GUANO"]["Version"];
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn metadata(&self) -> &HashMap<String, GuanoValue> {
         &self.map
     }
@@ -130,10 +231,22 @@ impl GuanoFile {
     }
 }
 
+/// Errors that can occur when reading GUANO metadata from WAV files.
 #[derive(Error, Debug)]
 pub enum GuanoError {
+    /// An I/O error occurred while reading the file.
+    ///
+    /// This variant wraps standard I/O errors that may occur during file operations,
+    /// such as permission issues, disk errors, or the file not existing.
     #[error("File IO Error")]
     FileIOError(#[from] io::Error),
+
+    /// The file does not contain a valid RIFF WAVE header or structure.
+    ///
+    /// This error occurs when:
+    /// - The file is too small to contain a valid RIFF header
+    /// - The WAVE format identifier is missing or incorrect
+    /// - The file structure does not conform to the RIFF WAVE specification
     #[error("RIFF \"WAVE\" header error")]
     FileHeaderError(String),
 }

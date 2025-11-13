@@ -2,6 +2,9 @@
 name = "guano-rs"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "A Rust library for reading GUANO metadata from WAV files"
+readme = "README.md"
 
 [dependencies]
 thiserror = "2.0.17"
