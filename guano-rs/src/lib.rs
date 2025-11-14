@@ -27,11 +27,7 @@ use thiserror::Error;
 /// let metadata = guano.metadata();
 /// ```
 #[derive(Debug)]
-pub struct GuanoFile<T>
-where
-    T: Read + Seek,
-{
-    reader: T,
+pub struct GuanoFile {
     map: HashMap<String, GuanoValue>,
 }
 
@@ -107,7 +103,7 @@ impl Index<&str> for GuanoValue {
         }
     }
 }
-impl<T: Read + Seek> GuanoFile<T> {
+impl GuanoFile {
     /// Creates a new `GuanoFile` by parsing GUANO metadata from a WAV file.
     ///
     /// This function reads the WAV file structure, locates the `guan` RIFF chunk,
@@ -134,12 +130,11 @@ impl<T: Read + Seek> GuanoFile<T> {
     /// let guano = GuanoFile::new(file)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn new(reader: T) -> Result<Self, GuanoError> {
+    pub fn new<T: Read + Seek>(reader: T) -> Result<Self, GuanoError> {
         let mut gf = GuanoFile {
-            reader,
             map: HashMap::new(),
         };
-        gf.load()?;
+        gf.load(reader)?;
         Ok(gf)
     }
 
@@ -177,18 +172,18 @@ impl<T: Read + Seek> GuanoFile<T> {
         &self.map
     }
 
-    fn load(&mut self) -> Result<(), GuanoError> {
+    fn load<T: Read + Seek>(&mut self, mut reader: T) -> Result<(), GuanoError> {
+        let reader = &mut reader;
         // check the file size. A valid RIFF header must be at least 8 bytes in size
-        if self.reader.seek(io::SeekFrom::End(0))? < 8 {
+        if reader.seek(io::SeekFrom::End(0))? < 8 {
             return Err(GuanoError::FileHeaderError(
                 "File too small to contain RIFF \"WAVE\" header".to_owned(),
             ));
         }
-        let buf_reader = &mut self.reader;
         // check that the file contains the "WAVE" RIFF chunk at 0x08
-        buf_reader.seek(io::SeekFrom::Start(0x08))?;
+        reader.seek(io::SeekFrom::Start(0x08))?;
         let mut header = [0u8; 4];
-        buf_reader.read_exact(&mut header)?;
+        reader.read_exact(&mut header)?;
         if header != c"WAVE".to_bytes() {
             return Err(GuanoError::FileHeaderError(format!(
                 "Expecxted RIFF chunk \"WAVE\", but found {}",
@@ -200,29 +195,29 @@ impl<T: Read + Seek> GuanoFile<T> {
         let mut chunksz_buf = [0u8; 4];
         let mut chunksz;
         let mut found_guano = false;
-        buf_reader.seek(io::SeekFrom::Start(0x0C))?;
+        reader.seek(io::SeekFrom::Start(0x0C))?;
         loop {
             // read chunk id big endian
-            if buf_reader.read_exact(&mut chunkid_buf).is_err() {
+            if reader.read_exact(&mut chunkid_buf).is_err() {
                 // Reached end of file
                 break;
             }
             // read chunk size as little endian
-            buf_reader.read_exact(&mut chunksz_buf)?;
+            reader.read_exact(&mut chunksz_buf)?;
             chunksz = u32::from_le_bytes(chunksz_buf) as usize;
 
             // if "guan" is present, extract the metadata
             if chunkid_buf == c"guan".to_bytes() {
                 let mut metadata_buf = vec![0; chunksz];
-                buf_reader.read_exact(&mut metadata_buf[0..chunksz])?;
+                reader.read_exact(&mut metadata_buf[0..chunksz])?;
                 self.parse(&metadata_buf)?;
                 found_guano = true;
                 break;
             } else {
-                buf_reader.seek_relative(chunksz.try_into().unwrap())?;
+                reader.seek_relative(chunksz.try_into().unwrap())?;
             }
             if chunksz % 2 != 0 {
-                buf_reader.seek_relative(1)?;
+                reader.seek_relative(1)?;
             }
         }
 
