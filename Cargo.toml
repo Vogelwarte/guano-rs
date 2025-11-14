@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 description = "A Rust library for reading GUANO metadata from WAV files"
 readme = "README.md"
+authors = ["Mario Fischer <mario.fischer@vogelwarte.ch>"]
 
 [dependencies]
 thiserror = "2.0.17"
