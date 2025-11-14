@@ -5,8 +5,7 @@
 ///
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{self, BufReader, Read, Seek},
+    io::{self, Read, Seek},
     ops::Index,
 };
 use thiserror::Error;
@@ -28,8 +27,11 @@ use thiserror::Error;
 /// let metadata = guano.metadata();
 /// ```
 #[derive(Debug)]
-pub struct GuanoFile {
-    file: File,
+pub struct GuanoFile<T>
+where
+    T: Read + Seek,
+{
+    reader: T,
     map: HashMap<String, GuanoValue>,
 }
 
@@ -105,7 +107,7 @@ impl Index<&str> for GuanoValue {
         }
     }
 }
-impl GuanoFile {
+impl<T: Read + Seek> GuanoFile<T> {
     /// Creates a new `GuanoFile` by parsing GUANO metadata from a WAV file.
     ///
     /// This function reads the WAV file structure, locates the `guan` RIFF chunk,
@@ -132,9 +134,9 @@ impl GuanoFile {
     /// let guano = GuanoFile::new(file)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn new(file: File) -> Result<Self, GuanoError> {
+    pub fn new(reader: T) -> Result<Self, GuanoError> {
         let mut gf = GuanoFile {
-            file,
+            reader,
             map: HashMap::new(),
         };
         gf.load()?;
@@ -177,12 +179,12 @@ impl GuanoFile {
 
     fn load(&mut self) -> Result<(), GuanoError> {
         // check the file size. A valid RIFF header must be at least 8 bytes in size
-        if self.file.metadata()?.len() < 8 {
+        if self.reader.seek(io::SeekFrom::End(0))? < 8 {
             return Err(GuanoError::FileHeaderError(
                 "File too small to contain RIFF \"WAVE\" header".to_owned(),
             ));
         }
-        let mut buf_reader = BufReader::new(&self.file);
+        let buf_reader = &mut self.reader;
         // check that the file contains the "WAVE" RIFF chunk at 0x08
         buf_reader.seek(io::SeekFrom::Start(0x08))?;
         let mut header = [0u8; 4];
@@ -213,7 +215,6 @@ impl GuanoFile {
             if chunkid_buf == c"guan".to_bytes() {
                 let mut metadata_buf = vec![0; chunksz];
                 buf_reader.read_exact(&mut metadata_buf[0..chunksz])?;
-                drop(buf_reader);
                 self.parse(&metadata_buf)?;
                 found_guano = true;
                 break;
@@ -320,6 +321,7 @@ pub enum GuanoError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn open_file() -> Result<(), GuanoError> {
@@ -348,6 +350,18 @@ mod tests {
         let f = File::open("testdata/no_meta.wav")?;
         let expected_err = GuanoFile::new(f).unwrap_err();
         assert!(matches!(expected_err, GuanoError::NoGuanoMetadata));
+        Ok(())
+    }
+
+    #[test]
+    fn too_small() -> Result<(), io::Error> {
+        let f = File::open("testdata/smol.wav")?;
+        let expected_err = GuanoFile::new(f).unwrap_err();
+        assert!(matches!(expected_err, GuanoError::FileHeaderError(_)));
+        let GuanoError::FileHeaderError(msg) = expected_err else {
+            unreachable!("Panic happend before, if the expected_err is not FileHeaderError");
+        };
+        assert!(msg.contains("too small"));
         Ok(())
     }
 }

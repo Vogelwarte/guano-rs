@@ -51,7 +51,6 @@ test:
   stage: test
   script:
     - cargo test --verbose
-  coverage: '/^test result: ok\. (\d+) passed/'
   needs: ["check"]
 
 # Run doc tests
@@ -84,4 +83,4 @@ build:docs:
     paths:
       - target/doc/
     expire_in: 1 week
-  needs: ["test"]
+  needs: ["test", "test:doc"]
