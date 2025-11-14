@@ -19,11 +19,11 @@ use thiserror::Error;
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust
 /// use std::fs::File;
 /// use guano_rs::GuanoFile;
 ///
-/// let file = File::open("recording.wav").unwrap();
+/// let file = File::open("testdata/recording.wav").unwrap();
 /// let guano = GuanoFile::new(file).unwrap();
 /// let metadata = guano.metadata();
 /// ```
@@ -41,11 +41,11 @@ pub struct GuanoFile {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```rust
 /// use guano_rs::{GuanoFile, GuanoValue};
 /// use std::fs::File;
 ///
-/// let file = File::open("recording.wav").unwrap();
+/// let file = File::open("testdata/recording.wav").unwrap();
 /// let guano = GuanoFile::new(file).unwrap();
 ///
 /// // Access a string value
@@ -83,11 +83,11 @@ impl Index<&str> for GuanoValue {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```rust
     /// use guano_rs::{GuanoFile, GuanoValue};
     /// use std::fs::File;
     ///
-    /// let file = File::open("recording.wav").unwrap();
+    /// let file = File::open("testdata/recording.wav").unwrap();
     /// let guano = GuanoFile::new(file).unwrap();
     ///
     /// // Safe: Check type first
@@ -124,11 +124,11 @@ impl GuanoFile {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```rust
     /// use std::fs::File;
     /// use guano_rs::GuanoFile;
     ///
-    /// let file = File::open("bat_recording.wav")?;
+    /// let file = File::open("testdata/recording.wav")?;
     /// let guano = GuanoFile::new(file)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -154,11 +154,11 @@ impl GuanoFile {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```rust
     /// use std::fs::File;
     /// use guano_rs::{GuanoFile, GuanoValue};
     ///
-    /// let file = File::open("recording.wav")?;
+    /// let file = File::open("testdata/recording.wav")?;
     /// let guano = GuanoFile::new(file)?;
     /// let metadata = guano.metadata();
     ///
@@ -323,14 +323,14 @@ mod tests {
 
     #[test]
     fn open_file() -> Result<(), GuanoError> {
-        let f = File::open("testdata/2MA04827_20250227_063900.wav")?;
+        let f = File::open("testdata/recording.wav")?;
         GuanoFile::new(f)?;
         Ok(())
     }
 
     #[test]
     fn has_guano_version() -> Result<(), GuanoError> {
-        let f = File::open("testdata/2MA04827_20250227_063900.wav")?;
+        let f = File::open("testdata/recording.wav")?;
         let gf = GuanoFile::new(f)?;
         // test some required params
         assert!(gf.metadata().get("GUANO").is_some());
@@ -345,7 +345,7 @@ mod tests {
     }
     #[test]
     fn has_no_guano_metadata() -> Result<(), io::Error> {
-        let f = File::open("testdata/recording.wav")?;
+        let f = File::open("testdata/no_meta.wav")?;
         let expected_err = GuanoFile::new(f).unwrap_err();
         assert!(matches!(expected_err, GuanoError::NoGuanoMetadata));
         Ok(())
