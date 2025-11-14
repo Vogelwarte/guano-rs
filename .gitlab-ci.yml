@@ -1,0 +1,87 @@
+stages:
+  - check
+  - test
+  - build
+
+# Use the official Rust image
+image: rust:latest
+
+# Cache cargo dependencies for faster builds
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+
+cache:
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/
+    - target/
+
+# Run before each job
+before_script:
+  - rustc --version
+  - cargo --version
+
+# Format check
+fmt:
+  stage: check
+  script:
+    - rustup component add rustfmt
+    - cargo fmt -- --check
+  allow_failure: false
+
+# Clippy linting
+clippy:
+  stage: check
+  script:
+    - rustup component add clippy
+    - cargo clippy -- -D warnings
+  allow_failure: false
+
+# Cargo check
+check:
+  stage: check
+  script:
+    - cargo check --all-features
+  allow_failure: false
+
+# Run tests
+test:
+  stage: test
+  script:
+    - cargo test --verbose
+  coverage: '/^test result: ok\. (\d+) passed/'
+  needs: ["check"]
+
+# Run doc tests
+test:doc:
+  stage: test
+  script:
+    - cargo test --doc --verbose
+  needs: ["check"]
+
+# Build release
+build:release:
+  stage: build
+  script:
+    - cargo build --release --verbose
+  artifacts:
+    paths:
+      - target/release/
+    expire_in: 1 week
+  needs: ["test", "test:doc"]
+  only:
+    - main
+    - tags
+
+# Build documentation
+build:docs:
+  stage: build
+  script:
+    - cargo doc --no-deps
+  artifacts:
+    paths:
+      - target/doc/
+    expire_in: 1 week
+  needs: ["test"]
