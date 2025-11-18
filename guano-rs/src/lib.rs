@@ -186,7 +186,7 @@ impl GuanoFile {
         reader.read_exact(&mut header)?;
         if header != c"WAVE".to_bytes() {
             return Err(GuanoError::FileHeaderError(format!(
-                "Expecxted RIFF chunk \"WAVE\", but found {}",
+                "Expected RIFF chunk \"WAVE\", but found {}",
                 String::from_utf8_lossy(&header)
             )));
         }
@@ -293,7 +293,7 @@ pub enum GuanoError {
     /// - The file is too small to contain a valid RIFF header
     /// - The WAVE format identifier is missing or incorrect
     /// - The file structure does not conform to the RIFF WAVE specification
-    #[error("RIFF \"WAVE\" header error")]
+    #[error("RIFF \"WAVE\" header error: {0}")]
     FileHeaderError(String),
 
     /// The WAV file does not contain a GUANO metadata chunk.
