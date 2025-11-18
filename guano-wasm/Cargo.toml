@@ -6,7 +6,11 @@ edition = "2024"
 [dependencies]
 guano-rs = { path = "../guano-rs" }
 wasm-bindgen = "0.2.105"
+web-sys = { version = "0.3.82", features = ["Exception"] }
 
 
 [lib]
 crate-type = ["cdylib"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.55"
