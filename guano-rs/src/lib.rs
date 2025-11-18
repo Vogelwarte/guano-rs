@@ -247,8 +247,8 @@ impl GuanoFile {
                 )));
             }
 
-            let full_key = kv[0];
-            let val = kv[1].to_owned();
+            let full_key = kv[0].trim();
+            let val = kv[1].trim().to_owned();
 
             // check to see if the key has a namespace
             if full_key.contains('|') {
