@@ -10,6 +10,7 @@ image: rust:latest
 # Cache cargo dependencies for faster builds
 variables:
   CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  PATH: $CI_PROJECT_DIR/.cargo/bin:$PATH
 
 cache:
   key:
@@ -61,7 +62,10 @@ test:wasm:
     - rustup target add wasm32-unknown-unknown
     - cargo install wasm-pack
     - apt-get update && apt-get install -y nodejs
+    - which wasm-pack
   script:
+    - echo $CARGO_HOME/bin
+    - which wasm-pack
     - wasm-pack test --release --node
   needs: ["check"]
 
