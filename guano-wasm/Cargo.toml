@@ -8,9 +8,8 @@ guano-rs = { path = "../guano-rs" }
 wasm-bindgen = "0.2.105"
 web-sys = { version = "0.3.82", features = ["Exception", "console"] }
 
-[toolchain]
-channel = "nightly"
-targets = "wasm32-unknown-unknown"
+[profile.release]
+lto = true
 
 [lib]
 crate-type = ["cdylib"]

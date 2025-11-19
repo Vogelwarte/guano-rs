@@ -2,6 +2,7 @@ stages:
   - check
   - test
   - build
+  - deploy
 
 # Use the official Rust image
 image: rust:latest
@@ -60,6 +61,17 @@ test:doc:
     - cargo test --doc --verbose
   needs: ["check"]
 
+# Run wasm tests
+test:wasm:
+  stage: test
+  before_script:
+    - rustup target add wasm32-unknown-unknown
+    - cargo install wasm-pack
+    - apt install nodejs
+  script:
+    - wasm-pack test --release --node
+  needs: ["check"]
+
 # Build release
 build:release:
   stage: build
@@ -84,3 +96,31 @@ build:docs:
       - target/doc/
     expire_in: 1 week
   needs: ["test", "test:doc"]
+
+# Build wasm release
+build:wasm:release:
+  stage: build
+  before_script:
+    - rustup target add wasm32-unknown-unknown
+    - cargo install wasm-pack
+  script:
+    - cd guano-wasm
+    - sed -i "s/version = \"\([^+]*\)+[^\"]*\"/version = \"\1+${CI_COMMIT_SHORT_SHA}\"/" Cargo.toml
+    - wasm-pack build --release
+  artifacts:
+    when: on_success
+    access: all
+    expire_in: "30 days"
+    paths:
+      - guano-wasm/pkg
+
+# Publish to package registry
+publish-npm:
+  needs: ["test", "test:doc", "test:wasm", "build:wasm:release"]
+  image: node:latest
+  stage: deploy
+  script:
+    - cd guano-wasm/pkg
+    - echo "@scope:registry=https://${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/" > .npmrc
+    - echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}" >> .npmrc
+    - npm publish
