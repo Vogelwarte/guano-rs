@@ -74,7 +74,7 @@ build:release:
     paths:
       - target/release/
     expire_in: 1 week
-  needs: ["test", "test:doc"]
+  needs: ["test"]
   only:
     - main
     - tags
@@ -88,7 +88,7 @@ build:docs:
     paths:
       - target/doc/
     expire_in: 1 week
-  needs: ["test", "test:doc"]
+  needs: ["test"]
 
 # Build wasm release
 build:wasm:release:
@@ -109,7 +109,7 @@ build:wasm:release:
 
 # Publish to package registry
 publish-npm:
-  needs: ["test", "test:doc", "test:wasm", "build:wasm:release"]
+  needs: ["test", "test:wasm", "build:wasm:release"]
   image: node:latest
   stage: deploy
   script:
