@@ -1,4 +1,4 @@
-use std::{collections::hash_map, io::Cursor};
+use std::io::Cursor;
 
 use guano_rs::{GuanoFile as RawGuanoFile, GuanoValue};
 use wasm_bindgen::prelude::*;
