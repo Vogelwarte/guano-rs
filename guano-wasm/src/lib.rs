@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{collections::hash_map, io::Cursor};
 
 use guano_rs::{GuanoFile as RawGuanoFile, GuanoValue};
 use wasm_bindgen::prelude::*;
@@ -39,11 +39,18 @@ impl GuanoFile {
     #[wasm_bindgen]
     pub fn get_metadata_inside_namespace(&self, namespace: &str, key: &str) -> Option<String> {
         if self.inner.metadata().contains_key(namespace) {
-            if let GuanoValue::String(s) = &self.inner.metadata()[namespace][key] {
-                Some(s.to_owned())
-            } else {
-                None
+            match &self.inner.metadata()[namespace] {
+                GuanoValue::String(v) => Some(v.to_owned()),
+                GuanoValue::Object(hash_map) => match hash_map.get(key) {
+                    Some(GuanoValue::String(v)) => Some(v.to_owned()),
+                    _ => None,
+                },
             }
+            // if let GuanoValue::String(s) = &self.inner.metadata()[namespace][key] {
+            // Some(s.to_owned())
+            // } else {
+            // None
+            // }
         } else {
             None
         }
@@ -79,7 +86,7 @@ impl GuanoFile {
     ///
     /// Returns `true`, if the key is present at the root namespace
     #[wasm_bindgen]
-    pub fn metadata_contains_key(&self, key: &str) -> bool {
+    pub fn metadata_contains(&self, key: &str) -> bool {
         self.inner.metadata().contains_key(key)
     }
 
@@ -87,8 +94,8 @@ impl GuanoFile {
     ///
     /// Return `true`, if the key is present at the namespace
     #[wasm_bindgen]
-    pub fn metadata_contains_key_inside_namespace(&self, namespace: &str, key: &str) -> bool {
-        if self.inner.metadata().contains_key(key) {
+    pub fn metadata_namespace_contains(&self, namespace: &str, key: &str) -> bool {
+        if self.inner.metadata().contains_key(namespace) {
             match &self.inner.metadata()[namespace] {
                 GuanoValue::String(_) => false,
                 GuanoValue::Object(hash_map) => hash_map.contains_key(key),
@@ -106,18 +113,18 @@ mod test {
 
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    const TEST_METADATA: &str = "Model: Song Meter Mini \
-Make: Wildlife Acoustics, Inc. \
-Original Filename: 2MA04827_20250227_073902.wav \
-Timestamp: 2025-02-27T07:39:02+01:00 \
-Samplerate: 24000 \
-GUANO|Version: 1.0 \
-WA|Song Meter|Prefix: 2MA04827 \
-WA|Song Meter|Audio settings: [{\"rate\":24000,\"gain\":18}] \
-Firmware Version: 4.6 \
-Loc Position: 46.765390 8.738140 \
-Serial: 2MA04827 \
-Length: 3597.99 \
+    const TEST_METADATA: &str = "Model: Song Meter Mini
+Make: Wildlife Acoustics, Inc.
+Original Filename: 2MA04827_20250227_073902.wav
+Timestamp: 2025-02-27T07:39:02+01:00
+Samplerate: 24000
+GUANO|Version: 1.0
+WA|Song Meter|Prefix: 2MA04827
+WA|Song Meter|Audio settings: [{\"rate\":24000,\"gain\":18}]
+Firmware Version: 4.6
+Loc Position: 46.765390 8.738140
+Serial: 2MA04827
+Length: 3597.99
 Temperature Int: -1.25";
     use super::*;
 
@@ -139,5 +146,127 @@ Temperature Int: -1.25";
             Ok(_) => (),
             Err(e) => panic!("Expected Ok, got Err('{}')", e),
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_contains_existing_root_key() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert!(gf.metadata_contains("Make"));
+        assert!(gf.metadata_contains("Timestamp"));
+        assert!(gf.metadata_contains("Serial"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_contains_nonexistent_key() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert!(!gf.metadata_contains("NonExistent"));
+        assert!(!gf.metadata_contains("FakeKey"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_contains_namespace_key() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        // Namespace keys should exist at root level
+        assert!(gf.metadata_contains("GUANO"));
+        assert!(gf.metadata_contains("WA"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_namespace_contains_existing_key() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+        let out: Vec<&String> = gf.inner.metadata().keys().collect();
+        assert!(gf.metadata_namespace_contains("GUANO", "Version"));
+        assert!(gf.metadata_namespace_contains("WA", "Song Meter|Prefix"));
+        assert!(gf.metadata_namespace_contains("WA", "Song Meter|Audio settings"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_namespace_contains_nonexistent_key() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert!(!gf.metadata_namespace_contains("GUANO", "NonExistent"));
+        assert!(!gf.metadata_namespace_contains("WA", "FakeKey"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_metadata_namespace_contains_nonexistent_namespace() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert!(!gf.metadata_namespace_contains("NonExistentNamespace", "Version"));
+        assert!(!gf.metadata_namespace_contains("FakeNamespace", "Key"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_get_metadata_returns_some() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert_eq!(
+            gf.get_metadata("Model"),
+            Some("Song Meter Mini".to_string())
+        );
+        assert_eq!(gf.get_metadata("Serial"), Some("2MA04827".to_string()));
+        assert_eq!(
+            gf.get_metadata("Timestamp"),
+            Some("2025-02-27T07:39:02+01:00".to_string())
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn test_get_metadata_returns_none() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert_eq!(gf.get_metadata("NonExistent"), None);
+        assert_eq!(gf.get_metadata("FakeKey"), None);
+        // Namespace keys should return None when accessed as root keys
+        assert_eq!(gf.get_metadata("GUANO"), None);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_get_metadata_inside_namespace_returns_some() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        assert_eq!(
+            gf.get_metadata_inside_namespace("GUANO", "Version"),
+            Some("1.0".to_string())
+        );
+        assert_eq!(
+            gf.get_metadata_inside_namespace("WA", "Song Meter|Prefix"),
+            Some("2MA04827".to_string())
+        );
+        assert_eq!(
+            gf.get_metadata_inside_namespace("WA", "Song Meter|Audio settings"),
+            Some("[{\"rate\":24000,\"gain\":18}]".to_string())
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn test_get_metadata_inside_namespace_returns_none() {
+        let file = &get_file_as_bytes_vec()[..];
+        let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
+
+        // Non-existent key in existing namespace
+        assert_eq!(
+            gf.get_metadata_inside_namespace("GUANO", "NonExistent"),
+            None
+        );
+        assert_eq!(gf.get_metadata_inside_namespace("WA", "FakeKey"), None);
+
+        // Non-existent namespace
+        assert_eq!(
+            gf.get_metadata_inside_namespace("NonExistentNamespace", "Version"),
+            None
+        );
     }
 }
