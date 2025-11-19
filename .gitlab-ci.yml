@@ -54,20 +54,13 @@ test:
     - cargo test --verbose
   needs: ["check"]
 
-# Run doc tests
-test:doc:
-  stage: test
-  script:
-    - cargo test --doc --verbose
-  needs: ["check"]
-
 # Run wasm tests
 test:wasm:
   stage: test
   before_script:
     - rustup target add wasm32-unknown-unknown
     - cargo install wasm-pack
-    - apt install nodejs
+    - apt-get update && apt-get install -y nodejs
   script:
     - wasm-pack test --release --node
   needs: ["check"]
