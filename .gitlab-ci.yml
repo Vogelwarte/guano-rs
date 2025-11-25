@@ -10,18 +10,10 @@ image: rust:latest
 # Cache cargo dependencies for faster builds
 variables:
   CARGO_HOME: $CI_PROJECT_DIR/.cargo
-  PATH: $CI_PROJECT_DIR/.cargo/bin:$PATH
-
-cache:
-  key:
-    files:
-      - Cargo.lock
-  paths:
-    - .cargo/
-    - target/
 
 # Run before each job
 before_script:
+  - export PATH="$CI_PROJECT_DIR/.cargo/bin:$PATH"
   - rustc --version
   - cargo --version
 
@@ -59,13 +51,12 @@ test:
 test:wasm:
   stage: test
   before_script:
+    - export PATH="$CI_PROJECT_DIR/.cargo/bin:$PATH"
     - rustup target add wasm32-unknown-unknown
     - cargo install wasm-pack
     - apt-get update && apt-get install -y nodejs
-    - which wasm-pack
   script:
-    - echo $CARGO_HOME/bin
-    - which wasm-pack
+    - cd guano-wasm
     - wasm-pack test --release --node
   needs: ["check"]
 
@@ -98,12 +89,13 @@ build:docs:
 build:wasm:release:
   stage: build
   before_script:
+    - export PATH="$CI_PROJECT_DIR/.cargo/bin:$PATH"
     - rustup target add wasm32-unknown-unknown
     - cargo install wasm-pack
   script:
     - cd guano-wasm
     - sed -i "s/version = \"\([^+]*\)+[^\"]*\"/version = \"\1+${CI_COMMIT_SHORT_SHA}\"/" Cargo.toml
-    - wasm-pack build --release
+    - wasm-pack build --release --scope ${CI_PROJECT_ROOT_NAMESPACE}
   artifacts:
     when: on_success
     access: all
@@ -112,12 +104,19 @@ build:wasm:release:
       - guano-wasm/pkg
 
 # Publish to package registry
-publish-npm:
+publish:
   needs: ["test", "test:wasm", "build:wasm:release"]
   image: node:latest
   stage: deploy
+  rules:
+    - if: '$CI_API_V4_URL =~ /gitlab\.com/'
+      when: on_success
+    - when: never
+  before_script:
+    - node --version
   script:
     - cd guano-wasm/pkg
-    - echo "@scope:registry=https://${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/" > .npmrc
-    - echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}" >> .npmrc
-    - npm publish
+    - npm config set -- ${CI_API_V4_URL#http*:}/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}
+    - npm config set @${CI_PROJECT_ROOT_NAMESPACE}:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/
+    - npm config list
+    - npm publish --verbose --tag latest

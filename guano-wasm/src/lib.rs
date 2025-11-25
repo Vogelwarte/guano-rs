@@ -46,11 +46,6 @@ impl GuanoFile {
                     _ => None,
                 },
             }
-            // if let GuanoValue::String(s) = &self.inner.metadata()[namespace][key] {
-            // Some(s.to_owned())
-            // } else {
-            // None
-            // }
         } else {
             None
         }

@@ -1,7 +1,9 @@
 [package]
 name = "guano-wasm"
-version = "0.1.0"
+version = "0.0.1-alpha"
 edition = "2024"
+license = "MIT"
+authors = ["vogelwarte.ch", "Mario Fischer"]
 
 [dependencies]
 guano-rs = { path = "../guano-rs" }
