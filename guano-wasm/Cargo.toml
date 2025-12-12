@@ -8,7 +8,8 @@ authors = ["vogelwarte.ch", "Mario Fischer"]
 [dependencies]
 guano-rs = { path = "../guano-rs" }
 wasm-bindgen = "0.2.105"
-web-sys = { version = "0.3.82", features = ["Exception", "console"] }
+wasm-bindgen-futures = "0.4.56"
+web-sys = { version = "0.3.82", features = ["Exception", "File", "console"] }
 
 [profile.release]
 lto = true
