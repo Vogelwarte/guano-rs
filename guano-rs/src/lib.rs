@@ -66,6 +66,17 @@ pub enum GuanoValue {
     Object(HashMap<String, GuanoValue>),
 }
 
+/// Trims leading and trailing whitespace as the GUANO specification defines it.
+///
+/// GUANO's notion of whitespace is wider than Rust's `char::is_whitespace`: the spec
+/// states that whitespace "should include the non-printing ASCII bytes including null,
+/// CR, LF, space, tab, etc.". Because `str::trim` does not strip NUL, recorders that pad
+/// the `guan` chunk with NUL bytes (as the Wildlife Acoustics Song Meter Mini does) would
+/// otherwise produce a trailing line that fails to parse.
+fn trim_guano(s: &str) -> &str {
+    s.trim_matches(|c: char| c.is_whitespace() || c.is_control())
+}
+
 impl Index<&str> for GuanoValue {
     type Output = GuanoValue;
 
@@ -175,7 +186,8 @@ impl GuanoFile {
     fn load<T: Read + Seek>(&mut self, mut reader: T) -> Result<(), GuanoError> {
         let reader = &mut reader;
         // check the file size. A valid RIFF header must be at least 8 bytes in size
-        if reader.seek(io::SeekFrom::End(0))? < 8 {
+        let file_len = reader.seek(io::SeekFrom::End(0))?;
+        if file_len < 8 {
             return Err(GuanoError::FileHeaderError(
                 "File too small to contain RIFF \"WAVE\" header".to_owned(),
             ));
@@ -185,9 +197,11 @@ impl GuanoFile {
         let mut header = [0u8; 4];
         reader.read_exact(&mut header)?;
         if header != c"WAVE".to_bytes() {
+            // Escape the bytes we found: a zeroed-out file would otherwise report
+            // invisible NULs.
             return Err(GuanoError::FileHeaderError(format!(
-                "Expected RIFF chunk \"WAVE\", but found {}",
-                String::from_utf8_lossy(&header)
+                "Expected RIFF chunk \"WAVE\", but found \"{}\"",
+                String::from_utf8_lossy(&header).escape_debug()
             )));
         }
 
@@ -205,6 +219,19 @@ impl GuanoFile {
             // read chunk size as little endian
             reader.read_exact(&mut chunksz_buf)?;
             chunksz = u32::from_le_bytes(chunksz_buf) as usize;
+
+            // A chunk that runs past the end of the file means the file is truncated.
+            // Without this check the walk would seek past EOF and the next read would
+            // simply end the loop, misreporting a damaged file as "no GUANO metadata".
+            let body_start = reader.stream_position()?;
+            let available = file_len - body_start;
+            if chunksz as u64 > available {
+                return Err(GuanoError::TruncatedFile {
+                    chunk: String::from_utf8_lossy(&chunkid_buf).into_owned(),
+                    declared_size: chunksz as u64,
+                    available,
+                });
+            }
 
             // if "guan" is present, extract the metadata
             if chunkid_buf == c"guan".to_bytes() {
@@ -233,8 +260,8 @@ impl GuanoFile {
         let str = str::from_utf8(raw)
             .map_err(|e| GuanoError::MalformedMetadata(format!("Invalid UTF-8: {}", e)))?;
 
-        for mut line in str.lines() {
-            line = line.trim();
+        for (idx, raw_line) in str.lines().enumerate() {
+            let line = trim_guano(raw_line);
             if line.is_empty() {
                 continue; // Skip empty lines
             }
@@ -242,13 +269,14 @@ impl GuanoFile {
             let kv: Vec<&str> = line.splitn(2, ':').collect();
             if kv.len() != 2 {
                 return Err(GuanoError::MalformedMetadata(format!(
-                    "Expected key:value format, found: '{}'",
-                    line
+                    "Expected key:value format on line {}, found: '{}'",
+                    idx + 1,
+                    line.escape_debug()
                 )));
             }
 
-            let full_key = kv[0].trim();
-            let val = kv[1].trim().to_owned();
+            let full_key = trim_guano(kv[0]);
+            let val = trim_guano(kv[1]).to_owned();
 
             // check to see if the key has a namespace
             if full_key.contains('|') {
@@ -302,6 +330,24 @@ pub enum GuanoError {
     /// the `guan` RIFF chunk that stores GUANO metadata.
     #[error("No GUANO metadata chunk found in file")]
     NoGuanoMetadata,
+
+    /// A RIFF chunk declares more bytes than the file actually contains.
+    ///
+    /// The file is damaged or was truncated, for example when a recorder lost power
+    /// mid-write. This is deliberately distinct from [`GuanoError::NoGuanoMetadata`]:
+    /// "this file is damaged" and "this recorder wrote no GUANO" call for very
+    /// different responses when triaging field recordings.
+    #[error(
+        "Truncated file: chunk \"{chunk}\" declares {declared_size} bytes, but only {available} remain"
+    )]
+    TruncatedFile {
+        /// The four character id of the offending chunk.
+        chunk: String,
+        /// The chunk length declared in the chunk header.
+        declared_size: u64,
+        /// The number of bytes actually remaining in the file.
+        available: u64,
+    },
 
     /// The GUANO metadata is malformed and cannot be parsed.
     ///
@@ -358,5 +404,179 @@ mod tests {
         };
         assert!(msg.contains("too small"));
         Ok(())
+    }
+
+    /// `testdata/weird.wav` is deliberately weird but fully spec-legal, so every
+    /// assertion below must hold. See `testdata/generate_weird.py` for its contents.
+    mod weird {
+        use super::*;
+
+        fn weird() -> GuanoFile {
+            let f = File::open("testdata/weird.wav").expect("testdata/weird.wav is missing");
+            GuanoFile::new(f).expect("weird.wav is spec-legal and must parse")
+        }
+
+        fn root(gf: &GuanoFile, key: &str) -> String {
+            match gf.metadata().get(key) {
+                Some(GuanoValue::String(s)) => s.to_owned(),
+                other => panic!("expected a string for '{key}', got {other:?}"),
+            }
+        }
+
+        fn nested(gf: &GuanoFile, ns: &str, key: &str) -> String {
+            match gf.metadata().get(ns) {
+                Some(GuanoValue::Object(m)) => match m.get(key) {
+                    Some(GuanoValue::String(s)) => s.to_owned(),
+                    other => panic!("expected a string for '{ns}|{key}', got {other:?}"),
+                },
+                other => panic!("expected an object for namespace '{ns}', got {other:?}"),
+            }
+        }
+
+        /// The bug this fixture exists for: a NUL padding byte must not leak into a value.
+        #[test]
+        fn nul_padding_is_trimmed() {
+            assert_eq!(root(&weird(), "Trailing NUL Value"), "22050");
+        }
+
+        /// An odd sized chunk before `guan` means a broken RIFF pad byte skip
+        /// desynchronizes the walk and `guan` is never found.
+        #[test]
+        fn finds_guan_after_odd_sized_chunk() {
+            assert!(weird().metadata().contains_key("Model"));
+        }
+
+        #[test]
+        fn trims_padded_key_and_value() {
+            assert_eq!(root(&weird(), "Make"), "Wildlife Acoustics, Inc.");
+        }
+
+        #[test]
+        fn keeps_colons_inside_value() {
+            assert_eq!(root(&weird(), "Timestamp"), "2026-01-15 08:12:02+01:00");
+        }
+
+        #[test]
+        fn strips_carriage_return() {
+            assert_eq!(root(&weird(), "Original Filename"), "weird.wav");
+        }
+
+        #[test]
+        fn keeps_multibyte_utf8() {
+            assert_eq!(root(&weird(), "Note"), "Waldkauz – Käuzchen, 5 °C");
+        }
+
+        #[test]
+        fn keeps_empty_value() {
+            assert_eq!(root(&weird(), "Empty Value"), "");
+        }
+
+        /// Escape sequences are not unescaped yet, so `\n` must survive as two
+        /// characters rather than becoming a newline.
+        #[test]
+        fn does_not_unescape_values() {
+            assert_eq!(root(&weird(), "Escaped"), "line one\\nline two");
+        }
+
+        #[test]
+        fn splits_namespace_on_first_pipe_only() {
+            let gf = weird();
+            assert_eq!(nested(&gf, "GUANO", "Version"), "1.0");
+            assert_eq!(nested(&gf, "WA", "Song Meter|Prefix"), "TANIAULMET");
+            assert_eq!(
+                nested(&gf, "WA", "Song Meter|Audio settings"),
+                r#"[{"rate":22050,"gain":18}]"#
+            );
+        }
+
+        /// The blank line and the whitespace-plus-NUL line must not become entries.
+        #[test]
+        fn skips_blank_and_whitespace_only_lines() {
+            let gf = weird();
+            let root_keys = gf.metadata().len();
+            let wa_keys = match &gf.metadata()["WA"] {
+                GuanoValue::Object(m) => m.len(),
+                _ => panic!("WA should be a namespace"),
+            };
+            // 12 plain keys + the GUANO and WA namespaces
+            assert_eq!(root_keys, 14, "unexpected root keys: {:?}", gf.metadata());
+            assert_eq!(wa_keys, 2);
+        }
+    }
+
+    /// Corrupt metadata must keep failing loudly. A silently half-parsed file is
+    /// worse than a rejected one when triaging recorder output.
+    mod still_rejects {
+        use super::*;
+        use std::io::Cursor;
+
+        /// Builds an in-memory RIFF/WAVE file wrapping `guan_payload`.
+        fn wav_with_guano(guan_payload: &[u8]) -> Vec<u8> {
+            let mut body = Vec::new();
+            body.extend_from_slice(b"data");
+            body.extend_from_slice(&4u32.to_le_bytes());
+            body.extend_from_slice(&[0u8; 4]);
+            body.extend_from_slice(b"guan");
+            body.extend_from_slice(&(guan_payload.len() as u32).to_le_bytes());
+            body.extend_from_slice(guan_payload);
+
+            let mut file = Vec::from(*b"RIFF");
+            file.extend_from_slice(&((4 + body.len()) as u32).to_le_bytes());
+            file.extend_from_slice(b"WAVE");
+            file.extend_from_slice(&body);
+            file
+        }
+
+        #[test]
+        fn line_without_a_colon() {
+            let wav = wav_with_guano(b"GUANO|Version:1.0\ngarbage line without a colon\n");
+            let err = GuanoFile::new(Cursor::new(wav)).unwrap_err();
+            let GuanoError::MalformedMetadata(msg) = err else {
+                panic!("expected MalformedMetadata, got {err:?}");
+            };
+            assert!(
+                msg.contains("line 2"),
+                "error should locate the line: {msg}"
+            );
+        }
+
+        /// Non printing bytes must be escaped in the message, otherwise the operator
+        /// sees an empty pair of quotes and cannot tell what went wrong.
+        #[test]
+        fn error_message_escapes_non_printing_bytes() {
+            let wav = wav_with_guano(b"GUANO|Version:1.0\nno colon \x07 here\n");
+            let err = GuanoFile::new(Cursor::new(wav)).unwrap_err();
+            assert!(
+                err.to_string().contains("\\u{7}"),
+                "expected an escaped byte in: {err}"
+            );
+        }
+
+        #[test]
+        fn invalid_utf8() {
+            let wav = wav_with_guano(b"Make:\xff\xfe invalid\n");
+            let err = GuanoFile::new(Cursor::new(wav)).unwrap_err();
+            assert!(matches!(err, GuanoError::MalformedMetadata(_)));
+        }
+
+        /// A chunk running past EOF is a damaged file, and must not be reported as
+        /// "this recorder wrote no GUANO metadata".
+        #[test]
+        fn truncated_chunk_is_not_reported_as_missing_metadata() {
+            let mut wav = wav_with_guano(b"GUANO|Version:1.0\n");
+            wav.truncate(wav.len() - 6); // chop the tail off the guan chunk
+            let err = GuanoFile::new(Cursor::new(wav)).unwrap_err();
+            let GuanoError::TruncatedFile {
+                chunk,
+                declared_size,
+                available,
+            } = err
+            else {
+                panic!("expected TruncatedFile, got {err:?}");
+            };
+            assert_eq!(chunk, "guan");
+            assert_eq!(declared_size, 18);
+            assert_eq!(available, 12);
+        }
     }
 }

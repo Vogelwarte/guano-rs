@@ -176,7 +176,6 @@ Temperature Int: -1.25";
     fn test_metadata_namespace_contains_existing_key() {
         let file = &get_file_as_bytes_vec()[..];
         let gf = GuanoFile::new(file).expect("Failed to create GuanoFile");
-        let out: Vec<&String> = gf.inner.metadata().keys().collect();
         assert!(gf.metadata_namespace_contains("GUANO", "Version"));
         assert!(gf.metadata_namespace_contains("WA", "Song Meter|Prefix"));
         assert!(gf.metadata_namespace_contains("WA", "Song Meter|Audio settings"));
