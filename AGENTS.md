@@ -9,15 +9,46 @@ An **independent** reader for GUANO (Grand Unified Acoustic Notation Ontology) m
 the `guan` RIFF chunk of WAV files, used for bat and other passive acoustic recordings. Not
 affiliated with the reference implementation.
 
-It is **read-only**: there is no metadata writing yet. Don't assume a write path exists.
+It is **read-only with respect to WAV files**: there is no way to write a `guan` chunk, and no
+mutation or setter API — `GuanoFile::map` is private. Don't assume a write path exists.
+
+Metadata that has been read *can* leave the process: `GuanoFile` and `GuanoValue` implement serde's
+`Serialize`/`Deserialize` (hand written, not derived — see Serde below).
 
 Rust **edition 2024**, Cargo workspace with `resolver = "3"`.
+
+## Features
+
+| Feature | Default | Pulls in | Gates |
+|---|---|---|---|
+| `cli` | yes | `clap`, `serde_json` | the `guano-rs` binary, via `required-features` on `[[bin]]` |
+| `serde` | via `cli` | `serde` | the `Serialize`/`Deserialize` impls, `sorted_keys`/`ordered_keys`, and `mod serde_impls` |
+
+The library itself needs only `thiserror`. `clap` alone drags in ~13 crates for a binary that
+library consumers never build, which is why `guano-wasm` sets `default-features = false` — that
+took its build from 44 crates to 24. **Keep it that way**; a stray default-featured dependency
+edge puts clap back in the wasm build.
+
+`serde_json` is *not* a library dependency: `lib.rs` uses it only in `#[cfg(test)]` code and doc
+examples, so it is both an optional dependency (for the bin) and a dev-dependency (for tests under
+`--no-default-features --features serde`).
+
+`serde` is declared **without** its `derive` feature on purpose — see Serde below.
+
+Check all three combinations when touching `Cargo.toml` or the `#[cfg(feature = "serde")]`
+attributes:
+
+```sh
+cargo test -p guano-rs                                          # 27 tests + 9 doc tests
+cargo test -p guano-rs --no-default-features                    # 18 tests + 5 doc tests
+cargo test -p guano-rs --no-default-features --features serde   # 27 tests + 9 doc tests
+```
 
 ## Layout
 
 | Path | What |
 |---|---|
-| [guano-rs/src/lib.rs](guano-rs/src/lib.rs) | The whole library: `GuanoFile`, `GuanoValue`, `GuanoError`. RIFF walk in `load()`, metadata parse in `parse()`. |
+| [guano-rs/src/lib.rs](guano-rs/src/lib.rs) | The whole library: `GuanoFile`, `GuanoValue`, `GuanoError`. RIFF walk in `load()`, metadata parse in `parse()`, serde impls after the `Index` impl. |
 | [guano-rs/src/main.rs](guano-rs/src/main.rs) | `guano-rs` CLI (clap). `--format kv\|json`, `--compact`. |
 | [guano-wasm/src/lib.rs](guano-wasm/src/lib.rs) | `wasm-bindgen` wrapper, `cdylib`, published as a scoped npm package to the GitLab registry. |
 | [guano-rs/testdata/](guano-rs/testdata/) | Fixtures — see Testing. |
@@ -64,6 +95,31 @@ Widen the parser only where the spec says to. Specifically:
   an unescaped NUL renders as nothing and makes a report undiagnosable.
 
 The tests under `mod still_rejects` enforce all of this. If one starts failing, the change is wrong.
+
+## Serde
+
+Gated behind the `serde` feature (on by default via `cli`). The impls are **hand written on
+purpose** — which is also why `serde` is declared without its `derive` feature; there is not a
+single `#[derive(Serialize)]` in the repo. Three things will break if someone "simplifies" them to
+a derive:
+
+- **Shape.** A derived `Serialize` on the `GuanoValue` enum emits the externally tagged
+  `{"String": "1.0"}`, leaking the Rust enum into the output. GUANO values are plain text.
+  `#[serde(untagged)]` fixes the shape but not the next point.
+- **Ordering.** `HashMap` iteration order varies per map instance, so a derive emits the same file
+  differently on every run. `ordered_keys()` puts the `GUANO` namespace first (the spec requires
+  `GUANO|Version` to be the first field) and sorts the rest; `sorted_keys()` handles nested
+  namespaces. `mod serde_impls` pins this, and `print_kv` in `main.rs` mirrors the same order so
+  both CLI formats agree.
+- **Strictness.** `GuanoValue`'s visitor reads namespace entries as `next_entry::<String, String>()`.
+  That one type parameter is what rejects non-string scalars and nesting deeper than one level —
+  neither could ever be written back into a `guan` chunk, since GUANO is a flat
+  `namespace|key: value` format. Deserializing uses `deserialize_any`, so self-describing formats
+  only.
+
+`GuanoFile` serializes as the metadata map itself, not as a wrapper object around it. `Deserialize`
+for `GuanoFile` is *not* a mutation API: it builds a detached metadata map that cannot be written to
+a WAV.
 
 ## Testing
 

@@ -3,6 +3,14 @@
 /// The authors of this package are not associated with the authors of the reference implementation.
 ///
 ///
+#[cfg(feature = "serde")]
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, MapAccess, Visitor},
+    ser::SerializeMap,
+};
+#[cfg(feature = "serde")]
+use std::fmt;
 use std::{
     collections::HashMap,
     io::{self, Read, Seek},
@@ -26,7 +34,7 @@ use thiserror::Error;
 /// let guano = GuanoFile::new(file).unwrap();
 /// let metadata = guano.metadata();
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuanoFile {
     map: HashMap<String, GuanoValue>,
 }
@@ -58,7 +66,7 @@ pub struct GuanoFile {
 ///     }
 /// }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuanoValue {
     /// A simple string value
     String(String),
@@ -75,6 +83,31 @@ pub enum GuanoValue {
 /// otherwise produce a trailing line that fails to parse.
 fn trim_guano(s: &str) -> &str {
     s.trim_matches(|c: char| c.is_whitespace() || c.is_control())
+}
+
+/// Returns the keys of `map` sorted alphabetically.
+///
+/// `HashMap` iteration order is unspecified and varies between runs, so serializing straight
+/// from the map would emit the same file differently every time and make output impossible to
+/// diff or checksum.
+#[cfg(feature = "serde")]
+fn sorted_keys(map: &HashMap<String, GuanoValue>) -> Vec<&String> {
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// Returns the root keys of `map` in GUANO output order: the `GUANO` namespace first, then
+/// the rest alphabetically.
+///
+/// The spec requires `GUANO|Version` to be the very first field, so its namespace leads.
+#[cfg(feature = "serde")]
+fn ordered_keys(map: &HashMap<String, GuanoValue>) -> Vec<&String> {
+    let mut keys = sorted_keys(map);
+    // `sort_by_key` is stable, so the alphabetical order established above survives for
+    // everything that is not the GUANO namespace.
+    keys.sort_by_key(|k| k.as_str() != "GUANO");
+    keys
 }
 
 impl Index<&str> for GuanoValue {
@@ -114,6 +147,183 @@ impl Index<&str> for GuanoValue {
         }
     }
 }
+
+#[cfg(feature = "serde")]
+impl Serialize for GuanoValue {
+    /// Serializes a value *transparently*: a [`GuanoValue::String`] becomes a plain string and
+    /// a [`GuanoValue::Object`] becomes a map.
+    ///
+    /// This is deliberately not a derived implementation, which would emit the externally
+    /// tagged form `{"String": "1.0"}` and leak the Rust enum into the output.
+    ///
+    /// Keys inside an object are emitted alphabetically, so the same metadata always produces
+    /// the same bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guano_rs::GuanoValue;
+    ///
+    /// let version = GuanoValue::String("1.0".to_owned());
+    /// assert_eq!(serde_json::to_string(&version)?, r#""1.0""#);
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            GuanoValue::String(s) => serializer.serialize_str(s),
+            GuanoValue::Object(hash_map) => {
+                let mut map = serializer.serialize_map(Some(hash_map.len()))?;
+                for key in sorted_keys(hash_map) {
+                    map.serialize_entry(key, &hash_map[key])?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for GuanoValue {
+    /// Deserializes a string into [`GuanoValue::String`] and a map into
+    /// [`GuanoValue::Object`], mirroring [`GuanoValue`]'s [`Serialize`] implementation.
+    ///
+    /// Namespace entries are read as strings, which rejects both non-string scalars
+    /// (`{"Samplerate": 22050}`) and nesting deeper than one level. That restriction is not
+    /// arbitrary: GUANO is a flat `namespace|key: value` text format, so neither shape could
+    /// ever be written back into a `guan` chunk.
+    ///
+    /// Note that this uses `deserialize_any`, so it requires a self-describing format such as
+    /// JSON or YAML. Formats like bincode, which do not record types on the wire, will fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guano_rs::GuanoValue;
+    ///
+    /// let value: GuanoValue = serde_json::from_str(r#""Song Meter Mini""#)?;
+    /// assert_eq!(value, GuanoValue::String("Song Meter Mini".to_owned()));
+    ///
+    /// // A number is not a GUANO value: every field is text.
+    /// assert!(serde_json::from_str::<GuanoValue>("22050").is_err());
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct GuanoValueVisitor;
+
+        impl<'de> Visitor<'de> for GuanoValueVisitor {
+            type Value = GuanoValue;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str(
+                    "a GUANO string value, or a namespace mapping field names to string values",
+                )
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(GuanoValue::String(v.to_owned()))
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(GuanoValue::String(v))
+            }
+
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                // Not `with_capacity(size_hint)`: the hint comes from the input and a hostile
+                // one would let a tiny document allocate an enormous map.
+                let mut hash_map = HashMap::new();
+                while let Some((key, value)) = access.next_entry::<String, String>()? {
+                    hash_map.insert(key, GuanoValue::String(value));
+                }
+                Ok(GuanoValue::Object(hash_map))
+            }
+        }
+
+        deserializer.deserialize_any(GuanoValueVisitor)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for GuanoFile {
+    /// Serializes the metadata map itself, so a file becomes a flat mapping of field names to
+    /// values rather than a wrapper object around it.
+    ///
+    /// The `GUANO` namespace is emitted first, because the specification requires
+    /// `GUANO|Version` to be the first field; the remaining root keys follow alphabetically.
+    /// The order is fixed rather than inherited from the `HashMap`, so serializing the same
+    /// file twice always yields identical output.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::fs::File;
+    /// use guano_rs::GuanoFile;
+    ///
+    /// let guano = GuanoFile::new(File::open("testdata/recording.wav")?)?;
+    /// let json = serde_json::to_string_pretty(&guano)?;
+    ///
+    /// // The GUANO namespace leads, as the specification requires.
+    /// assert!(json.starts_with("{\n  \"GUANO\": {"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.map.len()))?;
+        for key in ordered_keys(&self.map) {
+            map.serialize_entry(key, &self.map[key])?;
+        }
+        map.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for GuanoFile {
+    /// Rebuilds a `GuanoFile` from a mapping of field names to values, as produced by
+    /// [`GuanoFile`]'s [`Serialize`] implementation.
+    ///
+    /// The resulting value carries metadata only; it is not attached to a WAV file, and this
+    /// crate has no way to write it back into one.
+    ///
+    /// Values are deserialized through [`GuanoValue`], so the same one-level-of-nesting and
+    /// strings-only restrictions apply.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guano_rs::{GuanoFile, GuanoValue};
+    ///
+    /// let json = r#"{"GUANO": {"Version": "1.0"}, "Make": "Wildlife Acoustics, Inc."}"#;
+    /// let guano: GuanoFile = serde_json::from_str(json)?;
+    ///
+    /// assert_eq!(guano.metadata()["GUANO"]["Version"], GuanoValue::String("1.0".to_owned()));
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(GuanoFile {
+            map: HashMap::deserialize(deserializer)?,
+        })
+    }
+}
+
 impl GuanoFile {
     /// Creates a new `GuanoFile` by parsing GUANO metadata from a WAV file.
     ///
@@ -577,6 +787,135 @@ mod tests {
             assert_eq!(chunk, "guan");
             assert_eq!(declared_size, 18);
             assert_eq!(available, 12);
+        }
+    }
+
+    /// The serde implementations are hand written rather than derived, so the shape of the
+    /// output and the ordering guarantees are not enforced by the compiler and need tests.
+    #[cfg(feature = "serde")]
+    mod serde_impls {
+        use super::*;
+
+        fn recording() -> GuanoFile {
+            let f =
+                File::open("testdata/recording.wav").expect("testdata/recording.wav is missing");
+            GuanoFile::new(f).expect("recording.wav must parse")
+        }
+
+        /// A derived implementation would emit `{"String":"1.0"}` and leak the Rust enum into
+        /// the output. GUANO values are plain text and must serialize as plain text.
+        #[test]
+        fn string_serializes_as_bare_json_string() {
+            let value = GuanoValue::String("1.0".to_owned());
+            assert_eq!(serde_json::to_string(&value).unwrap(), r#""1.0""#);
+        }
+
+        #[test]
+        fn namespace_serializes_as_nested_object() {
+            let mut ns = HashMap::new();
+            ns.insert("Version".to_owned(), GuanoValue::String("1.0".to_owned()));
+            let value = GuanoValue::Object(ns);
+            assert_eq!(
+                serde_json::to_string(&value).unwrap(),
+                r#"{"Version":"1.0"}"#
+            );
+        }
+
+        /// The spec requires `GUANO|Version` to be the first field, so its namespace leads.
+        #[test]
+        fn guano_namespace_is_the_first_key() {
+            let json = serde_json::to_string(&recording()).unwrap();
+            assert!(
+                json.starts_with(r#"{"GUANO":{"Version":"#),
+                "GUANO namespace should lead: {json}"
+            );
+        }
+
+        #[test]
+        fn remaining_root_keys_are_sorted() {
+            let json = serde_json::to_string(&recording()).unwrap();
+            // Alphabetical, and each pattern includes the colon so it can only match a key.
+            let expected = [
+                r#""Firmware Version":"#,
+                r#""Length":"#,
+                r#""Make":"#,
+                r#""Model":"#,
+                r#""Samplerate":"#,
+                r#""Serial":"#,
+                r#""Timestamp":"#,
+            ];
+            let positions: Vec<usize> = expected
+                .iter()
+                .map(|key| {
+                    json.find(key)
+                        .unwrap_or_else(|| panic!("missing key {key} in {json}"))
+                })
+                .collect();
+            assert!(
+                positions.windows(2).all(|w| w[0] < w[1]),
+                "root keys are not alphabetical: {json}"
+            );
+        }
+
+        /// `HashMap` iteration order varies per map instance, so identical metadata built by a
+        /// different insertion order must still produce byte-identical output.
+        #[test]
+        fn output_is_stable_across_serializations() {
+            let forward: GuanoFile = serde_json::from_str(
+                r#"{"Make":"Wildlife Acoustics, Inc.","Model":"Song Meter Mini","GUANO":{"Version":"1.0"},"Serial":"2MA04827"}"#,
+            )
+            .unwrap();
+            let reversed: GuanoFile = serde_json::from_str(
+                r#"{"Serial":"2MA04827","GUANO":{"Version":"1.0"},"Model":"Song Meter Mini","Make":"Wildlife Acoustics, Inc."}"#,
+            )
+            .unwrap();
+
+            assert_eq!(forward, reversed);
+            assert_eq!(
+                serde_json::to_string(&forward).unwrap(),
+                serde_json::to_string(&reversed).unwrap()
+            );
+        }
+
+        #[test]
+        fn round_trips_through_json() {
+            let original = recording();
+            let json = serde_json::to_string(&original).unwrap();
+            let restored: GuanoFile = serde_json::from_str(&json).unwrap();
+            assert_eq!(original, restored);
+        }
+
+        /// Namespaces split on the first `|` only, so the remainder of the key is an ordinary
+        /// field name that must survive a round trip with its pipe intact.
+        #[test]
+        fn preserves_pipes_in_nested_keys() {
+            let json = serde_json::to_string(&recording()).unwrap();
+            let restored: GuanoFile = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                restored.metadata()["WA"]["Song Meter|Prefix"],
+                GuanoValue::String("2MA04827".to_owned())
+            );
+        }
+
+        /// Every GUANO field is text. A JSON number is not a value this crate could ever have
+        /// parsed out of a `guan` chunk, so accepting it would invent data.
+        #[test]
+        fn rejects_non_string_scalars() {
+            let err = serde_json::from_str::<GuanoFile>(r#"{"Samplerate":22050}"#).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid type"),
+                "unhelpful error: {err}"
+            );
+        }
+
+        /// GUANO is a flat `namespace|key: value` format, so a second level of nesting could
+        /// never be written back out.
+        #[test]
+        fn rejects_nesting_deeper_than_one_level() {
+            assert!(
+                serde_json::from_str::<GuanoFile>(r#"{"WA":{"Song Meter":{"Prefix":"X"}}}"#)
+                    .is_err()
+            );
         }
     }
 }

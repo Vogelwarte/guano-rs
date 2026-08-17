@@ -7,8 +7,26 @@ description = "A Rust library for reading GUANO metadata from WAV files"
 readme = "README.md"
 authors = ["Mario Fischer <mario.fischer@vogelwarte.ch>"]
 
+[features]
+default = ["cli"]
+# The `guano-rs` binary. Off by default for library consumers, who would otherwise
+# compile the whole clap tree for a binary they never build.
+cli = ["serde", "dep:clap", "dep:serde_json"]
+# serde `Serialize`/`Deserialize` for `GuanoFile` and `GuanoValue`.
+serde = ["dep:serde"]
+
 [dependencies]
 thiserror = "2.0"
-clap = { version = "4.5", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"] }
+# No "derive" feature: the serde impls are hand written, see the Serde section of AGENTS.md.
+serde = { version = "1.0", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[dev-dependencies]
+# The serde tests and doc examples use JSON even when the `cli` feature is off.
 serde_json = "1.0"
+
+[[bin]]
+name = "guano-rs"
+path = "src/main.rs"
+required-features = ["cli"]
