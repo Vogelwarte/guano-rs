@@ -1,5 +1,5 @@
 [package]
-name = "guano-rs"
+name = "guano"
 version = "0.1.1"
 edition = "2024"
 license = "MIT"
@@ -12,7 +12,7 @@ categories = ["multimedia::audio", "parser-implementations", "science"]
 
 [features]
 default = ["cli"]
-# The `guano-rs` binary. Off by default for library consumers, who would otherwise
+# The `guano` binary. Off by default for library consumers, who would otherwise
 # compile the whole clap tree for a binary they never build.
 cli = ["serde", "dep:clap", "dep:serde_json"]
 # serde `Serialize`/`Deserialize` for `GuanoFile` and `GuanoValue`.
@@ -30,6 +30,6 @@ serde_json = { version = "1.0", optional = true }
 serde_json = "1.0"
 
 [[bin]]
-name = "guano-rs"
+name = "guano"
 path = "src/main.rs"
 required-features = ["cli"]

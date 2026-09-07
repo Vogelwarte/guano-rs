@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use guano_rs::{GuanoFile as RawGuanoFile, GuanoValue};
+use guano::{GuanoFile as RawGuanoFile, GuanoValue};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

@@ -4,7 +4,7 @@ WebAssembly bindings for reading GUANO metadata from WAV files in JavaScript and
 
 ## About
 
-This package provides WebAssembly bindings to [guano-rs](../guano-rs), allowing you to read GUANO (Grand Unified Acoustic Notation Ontology) metadata from bat acoustic recordings in browser and Node.js environments.
+This package provides WebAssembly bindings to [guano](../guano), allowing you to read GUANO (Grand Unified Acoustic Notation Ontology) metadata from bat acoustic recordings in browser and Node.js environments.
 
 GUANO is a metadata format for bat acoustic recordings stored within WAV files. This library provides a simple JavaScript/TypeScript interface to read and parse GUANO metadata.
 

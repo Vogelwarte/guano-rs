@@ -28,7 +28,7 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use std::fs::File;
-/// use guano_rs::GuanoFile;
+/// use guano::GuanoFile;
 ///
 /// let file = File::open("testdata/recording.wav").unwrap();
 /// let guano = GuanoFile::new(file).unwrap();
@@ -48,7 +48,7 @@ pub struct GuanoFile {
 /// # Examples
 ///
 /// ```rust
-/// use guano_rs::{GuanoFile, GuanoValue};
+/// use guano::{GuanoFile, GuanoValue};
 /// use std::fs::File;
 ///
 /// let file = File::open("testdata/recording.wav").unwrap();
@@ -126,7 +126,7 @@ impl Index<&str> for GuanoValue {
     /// # Examples
     ///
     /// ```rust
-    /// use guano_rs::{GuanoFile, GuanoValue};
+    /// use guano::{GuanoFile, GuanoValue};
     /// use std::fs::File;
     ///
     /// let file = File::open("testdata/recording.wav").unwrap();
@@ -162,7 +162,7 @@ impl Serialize for GuanoValue {
     /// # Examples
     ///
     /// ```rust
-    /// use guano_rs::GuanoValue;
+    /// use guano::GuanoValue;
     ///
     /// let version = GuanoValue::String("1.0".to_owned());
     /// assert_eq!(serde_json::to_string(&version)?, r#""1.0""#);
@@ -201,7 +201,7 @@ impl<'de> Deserialize<'de> for GuanoValue {
     /// # Examples
     ///
     /// ```rust
-    /// use guano_rs::GuanoValue;
+    /// use guano::GuanoValue;
     ///
     /// let value: GuanoValue = serde_json::from_str(r#""Song Meter Mini""#)?;
     /// assert_eq!(value, GuanoValue::String("Song Meter Mini".to_owned()));
@@ -271,7 +271,7 @@ impl Serialize for GuanoFile {
     ///
     /// ```rust
     /// use std::fs::File;
-    /// use guano_rs::GuanoFile;
+    /// use guano::GuanoFile;
     ///
     /// let guano = GuanoFile::new(File::open("testdata/recording.wav")?)?;
     /// let json = serde_json::to_string_pretty(&guano)?;
@@ -306,7 +306,7 @@ impl<'de> Deserialize<'de> for GuanoFile {
     /// # Examples
     ///
     /// ```rust
-    /// use guano_rs::{GuanoFile, GuanoValue};
+    /// use guano::{GuanoFile, GuanoValue};
     ///
     /// let json = r#"{"GUANO": {"Version": "1.0"}, "Make": "Wildlife Acoustics, Inc."}"#;
     /// let guano: GuanoFile = serde_json::from_str(json)?;
@@ -345,7 +345,7 @@ impl GuanoFile {
     ///
     /// ```rust
     /// use std::fs::File;
-    /// use guano_rs::GuanoFile;
+    /// use guano::GuanoFile;
     ///
     /// let file = File::open("testdata/recording.wav")?;
     /// let guano = GuanoFile::new(file)?;
@@ -374,7 +374,7 @@ impl GuanoFile {
     ///
     /// ```rust
     /// use std::fs::File;
-    /// use guano_rs::{GuanoFile, GuanoValue};
+    /// use guano::{GuanoFile, GuanoValue};
     ///
     /// let file = File::open("testdata/recording.wav")?;
     /// let guano = GuanoFile::new(file)?;

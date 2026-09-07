@@ -1,4 +1,4 @@
-# guano-rs
+# guano
 
 A Rust library for reading GUANO metadata from WAV files.
 
@@ -14,14 +14,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-guano-rs = { version = "0.1.0", default-features = false, features = ["serde"] }
+guano = { version = "0.1.1", default-features = false, features = ["serde"] }
 ```
 
 ### Feature flags
 
 | Feature | Default | Description |
 |---|---|---|
-| `cli` | yes | Builds the `guano-rs` command line tool. Pulls in `clap` and `serde_json`. |
+| `cli` | yes | Builds the `guano` command line tool. Pulls in `clap` and `serde_json`. |
 | `serde` | via `cli` | `Serialize`/`Deserialize` for `GuanoFile` and `GuanoValue`. Pulls in `serde`. |
 
 The default features build the command line tool. As a library you usually want
@@ -30,7 +30,7 @@ you need [serialization](#serialization):
 
 ```toml
 # reading only, minimal dependencies
-guano-rs = { version = "0.1.0", default-features = false }
+guano = { version = "0.1.1", default-features = false }
 ```
 
 ## Usage
@@ -39,7 +39,7 @@ guano-rs = { version = "0.1.0", default-features = false }
 
 ```rust
 use std::fs::File;
-use guano_rs::GuanoFile;
+use guano::GuanoFile;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open a WAV file containing GUANO metadata
@@ -87,7 +87,7 @@ converted to JSON (or any other serde format) and read back:
 
 ```rust
 use std::fs::File;
-use guano_rs::GuanoFile;
+use guano::GuanoFile;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let guano_file = GuanoFile::new(File::open("path/to/your/file.wav")?)?;
@@ -133,9 +133,9 @@ coerced.
 The crate ships a small binary for inspecting a file:
 
 ```sh
-guano-rs recording.wav                    # key-value output
-guano-rs recording.wav --format json      # pretty-printed JSON
-guano-rs recording.wav --format json -c   # compact JSON
+guano recording.wav                    # key-value output
+guano recording.wav --format json      # pretty-printed JSON
+guano recording.wav --format json -c   # compact JSON
 ```
 
 ## License

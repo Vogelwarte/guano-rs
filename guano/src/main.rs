@@ -1,10 +1,10 @@
 use clap::Parser;
-use guano_rs::{GuanoFile, GuanoValue};
+use guano::{GuanoFile, GuanoValue};
 use std::fs::File;
 use std::process;
 
 #[derive(Parser)]
-#[command(name = "guano-rs")]
+#[command(name = "guano")]
 #[command(about = "Display GUANO metadata from WAV files", long_about = None)]
 struct Args {
     /// Path to the WAV file

@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Vogelwarte/guano-rs"
-description = "WebAssembly bindings for guano-rs: read GUANO metadata from WAV files in JavaScript"
+description = "WebAssembly bindings for guano: read GUANO metadata from WAV files in JavaScript"
 readme = "README.md"
 keywords = ["guano", "wav", "bioacoustics", "wasm", "metadata"]
 categories = ["multimedia::audio", "wasm", "science"]
@@ -12,7 +12,7 @@ authors = ["vogelwarte.ch", "Mario Fischer"]
 
 [dependencies]
 # default-features = false drops the CLI's clap/serde_json tree from the wasm build.
-guano-rs = { path = "../guano-rs", version = "0.1.1", default-features = false }
+guano = { path = "../guano", version = "0.1.1", default-features = false }
 wasm-bindgen = "0.2.105"
 wasm-bindgen-futures = "0.4.56"
 web-sys = { version = "0.3.82", features = ["Exception", "File", "console"] }
