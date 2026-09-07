@@ -175,12 +175,37 @@ the short commit SHA), and publish the npm package to the GitLab registry on `ma
 `thiserror` for the error enum; every public item carries rustdoc with a runnable example. Match
 that density when adding public API.
 
+## Publishing
+
+Both crates go to **crates.io**, and `guano-wasm` additionally ships to the GitLab **npm** registry
+via [.gitlab-ci.yml](.gitlab-ci.yml). Public source is mirrored at
+<https://github.com/Vogelwarte/guano-rs>, which is what `repository` points at in both manifests.
+
+**Order matters and is not optional:** `guano-wasm` depends on `guano-rs` by version, so
+`cargo package -p guano-wasm` fails with "no matching package named `guano-rs`" until that exact
+version is live on crates.io. Publish `guano-rs` first, wait for the index, then `guano-wasm`.
+
+```sh
+cargo publish -p guano-rs
+cargo publish -p guano-wasm   # only once guano-rs <version> is on crates.io
+```
+
+Rules that bite here:
+
+- The `guano-rs` dependency in `guano-wasm/Cargo.toml` carries **both** `path` and `version`. Cargo
+  strips `path` when packaging and resolves from crates.io; local and CI builds keep using the
+  path. Dropping either one breaks something — `version` breaks publishing, `path` breaks
+  workspace development.
+- **The two versions must move together.** Bump `guano-rs`, and you must bump both the `version` in
+  `guano-wasm/Cargo.toml` *and* the `version` in its `guano-rs` dependency line.
+- `cargo publish` is **irreversible**. A version can be yanked but never replaced or deleted, and
+  the name can never be reused. Run `cargo package -p <crate>` and inspect the tarball first.
+- `guano-rs` needs its **own** `LICENSE` file: cargo only packages files under the crate directory,
+  so the workspace-root `LICENSE` does not reach the tarball. Same for `guano-wasm`.
+- `testdata/` ships with the crate (~350 KiB compressed) so that `cargo test` works on the
+  published source, and because the doc examples open `testdata/recording.wav`.
+
 ## Housekeeping quirks
 
-- A stale `guano-rs/Cargo.lock` sits beside the workspace root `Cargo.lock`; the workspace uses the
-  root one.
-- `guano-rs/Cargo.toml` says `0.1.0` while the only git tag is `0.0.1`.
-- `guano-wasm/Cargo.toml` defines `[profile.release]`, which Cargo ignores for non-root packages and
-  warns about on every build.
 - Production recordings run 150 MB+ and live on a slow DFS network share, so the RIFF walk seeks
   rather than reading; keep it that way.

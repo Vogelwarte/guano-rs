@@ -1,11 +1,14 @@
 [package]
 name = "guano-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/Vogelwarte/guano-rs"
 description = "A Rust library for reading GUANO metadata from WAV files"
 readme = "README.md"
 authors = ["Mario Fischer <mario.fischer@vogelwarte.ch>"]
+keywords = ["guano", "wav", "bioacoustics", "bat", "metadata"]
+categories = ["multimedia::audio", "parser-implementations", "science"]
 
 [features]
 default = ["cli"]
